@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\DWTVisualizerController;
+use App\Http\Controllers\AIVerificationController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -18,3 +19,7 @@ Route::post('/verify', [ImageController::class, 'verify'])->name('verify.check')
 // DWT Visualizer routes
 Route::get('/visualize', [DWTVisualizerController::class, 'index'])->name('visualize');
 Route::post('/visualize', [DWTVisualizerController::class, 'visualize'])->name('visualize.process');
+
+// AI Verification routes
+Route::get('/ai-verification', [AIVerificationController::class, 'index'])->name('ai-verification');
+Route::post('/ai-verification', [AIVerificationController::class, 'verify'])->name('ai-verification.check');

@@ -21,7 +21,7 @@ def image_to_pattern(watermark_image_path, target_shape):
     
     Returns:
         numpy array: Pattern generated from image
-    """
+ I   """
     # Load watermark image
     wm_img = Image.open(watermark_image_path).convert('L')  # Convert to grayscale
     
@@ -72,23 +72,33 @@ def embed_watermark(image_path, output_path, watermark_image_path):
             coeffs2 = pywt.dwt2(channel, 'haar')
             LL, (LH, HL, HH) = coeffs2
             
-            # Generate watermark pattern from image
-            watermark_pattern = image_to_pattern(watermark_image_path, LH.shape)
+            # Generate watermark patterns for each sub-band
+            # Using different strengths optimized for each sub-band
+            ll_pattern = image_to_pattern(watermark_image_path, LL.shape)
+            lh_pattern = image_to_pattern(watermark_image_path, LH.shape)
+            hl_pattern = image_to_pattern(watermark_image_path, HL.shape)
             
-            # Embed watermark in LH (horizontal details)
-            watermark_strength = 2.0
+            # Embed watermark in multiple sub-bands for robustness
+            # LL: Lower strength (1.5) - most visible but most robust
+            # LH: Medium strength (6.0) - horizontal details
+            # HL: Medium strength (6.0) - vertical details
+            # HH: Not used - too fragile to compression
+            ll_strength = 1.5
+            lh_strength = 6.0
+            hl_strength = 6.0
             
-            # Scale pattern and add to LH coefficients
-            LH_watermarked = LH + (watermark_pattern * watermark_strength)
+            LL_watermarked = LL + (ll_pattern * ll_strength)
+            LH_watermarked = LH + (lh_pattern * lh_strength)
+            HL_watermarked = HL + (hl_pattern * hl_strength)
             
-            # Reconstruct image
-            coeffs2_watermarked = LL, (LH_watermarked, HL, HH)
+            # Reconstruct image with watermarked sub-bands
+            coeffs2_watermarked = LL_watermarked, (LH_watermarked, HL_watermarked, HH)
             reconstructed = pywt.idwt2(coeffs2_watermarked, 'haar')
             
             # Handle dimension mismatch due to DWT
             if reconstructed.shape != channel.shape:
                 # Crop or pad to match original dimensions
-                min_h = min(reconstructed.shape[0], channel.shape[0])
+                min_h = min(reconstructed.shape[0], channel.shape[0])   
                 min_w = min(reconstructed.shape[1], channel.shape[1])
                 watermarked[:min_h, :min_w, i] = reconstructed[:min_h, :min_w]
             else:

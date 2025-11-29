@@ -43,87 +43,142 @@ def verify_watermark(image_path, sensitivity='medium', known_watermarks=None):
             LL, (LH, HL, HH) = coeffs2
             
             # === METRIC 1: Pattern Uniformity Detection ===
-            # Our watermark adds a uniform value to all LH coefficients
-            # Check if LH has unusually low variance (indicating uniform addition)
+            # Our watermark adds values to LL, LH, and HL coefficients
+            # Check if they have unusually modified characteristics
+            ll_variance = np.var(LL)
+            ll_mean = np.mean(LL)
+            ll_std = np.std(LL)
+            
             lh_variance = np.var(LH)
             lh_mean = np.mean(LH)
             lh_std = np.std(LH)
             
-            # Coefficient of variation (lower = more uniform = more likely watermarked)
-            cv = lh_std / (abs(lh_mean) + 1e-10)
+            hl_variance = np.var(HL)
+            hl_mean = np.mean(HL)
+            hl_std = np.std(HL)
+            
+            # Coefficient of variation for each sub-band
+            ll_cv = ll_std / (abs(ll_mean) + 1e-10)
+            lh_cv = lh_std / (abs(lh_mean) + 1e-10)
+            hl_cv = hl_std / (abs(hl_mean) + 1e-10)
             
             # === METRIC 2: Elevated Mean Detection ===
-            # Watermark adds positive values, shifting mean upward
-            # Compare LH mean to other subbands
-            hl_mean = np.mean(np.abs(HL))
+            # Watermark adds values, shifting means upward
             hh_mean = np.mean(np.abs(HH))
-            ll_mean = np.mean(np.abs(LL))
             
-            # Ratio of LH to other high-frequency components
-            lh_ratio = np.mean(np.abs(LH)) / (hl_mean + 1e-10)
+            # Ratios indicating watermark presence
+            ll_ratio = np.mean(np.abs(LL)) / (hh_mean + 1e-10)
+            lh_ratio = np.mean(np.abs(LH)) / (hh_mean + 1e-10)
+            hl_ratio = np.mean(np.abs(HL)) / (hh_mean + 1e-10)
             
             # === METRIC 3: Distribution Analysis ===
-            # Check if LH coefficients are shifted from zero
-            lh_median = np.median(LH)
+            # Check if coefficients are shifted from zero
+            ll_positive_ratio = np.sum(LL > 0) / LL.size
             lh_positive_ratio = np.sum(LH > 0) / LH.size
+            hl_positive_ratio = np.sum(HL > 0) / HL.size
             
             # === METRIC 4: Pattern Consistency ===
-            # Our watermark adds the same value everywhere
-            # Check for spatial consistency
+            # Check for spatial consistency in watermarked sub-bands
+            ll_blocks = []
             lh_blocks = []
+            hl_blocks = []
             block_size = max(LH.shape[0] // 4, 1)
+            
             for by in range(0, LH.shape[0], block_size):
                 for bx in range(0, LH.shape[1], block_size):
-                    block = LH[by:by+block_size, bx:bx+block_size]
-                    if block.size > 0:
-                        lh_blocks.append(np.mean(block))
+                    ll_block = LL[by:by+block_size, bx:bx+block_size] if by < LL.shape[0] and bx < LL.shape[1] else None
+                    lh_block = LH[by:by+block_size, bx:bx+block_size]
+                    hl_block = HL[by:by+block_size, bx:bx+block_size]
+                    
+                    if ll_block is not None and ll_block.size > 0:
+                        ll_blocks.append(np.mean(ll_block))
+                    if lh_block.size > 0:
+                        lh_blocks.append(np.mean(lh_block))
+                    if hl_block.size > 0:
+                        hl_blocks.append(np.mean(hl_block))
             
-            block_consistency = 1.0 - (np.std(lh_blocks) / (np.mean(np.abs(lh_blocks)) + 1e-10))
+            ll_consistency = 1.0 - (np.std(ll_blocks) / (np.mean(np.abs(ll_blocks)) + 1e-10)) if ll_blocks else 0
+            lh_consistency = 1.0 - (np.std(lh_blocks) / (np.mean(np.abs(lh_blocks)) + 1e-10))
+            hl_consistency = 1.0 - (np.std(hl_blocks) / (np.mean(np.abs(hl_blocks)) + 1e-10))
             
             # === COMPOSITE SCORE ===
-            # Calculate a composite watermark score for this channel
-            # Balanced to detect real watermarks while minimizing false positives
+            # Calculate watermark score based on all three sub-bands
             score = 0.0
             
-            # High LH mean (watermark adds positive values)
-            # Natural images typically have LH mean < 1.5
-            if np.mean(np.abs(LH)) > 2.0:
-                score += 3.0
-            elif np.mean(np.abs(LH)) > 1.5:
-                score += 1.5
+            # LL sub-band detection (lower strength watermark)
+            if np.mean(np.abs(LL)) > 100:  # LL has higher base values
+                score += 2.0
+            elif np.mean(np.abs(LL)) > 90:
+                score += 1.0
             
-            # LH is elevated compared to HL
-            # Watermark creates imbalance between subbands
-            if lh_ratio > 1.4:
+            if ll_consistency > 0.85:
+                score += 1.5
+            elif ll_consistency > 0.75:
+                score += 0.5
+            
+            # LH sub-band detection (medium strength watermark)
+            if np.mean(np.abs(LH)) > 4.0:
+                score += 3.0
+            elif np.mean(np.abs(LH)) > 2.5:
+                score += 2.0
+            elif np.mean(np.abs(LH)) > 1.5:
+                score += 1.0
+            
+            if lh_ratio > 1.5:
                 score += 2.0
             elif lh_ratio > 1.2:
                 score += 1.0
             
-            # High spatial consistency (uniform pattern)
-            # Watermark creates uniform patterns
-            if block_consistency > 0.75:
-                score += 2.5
-            elif block_consistency > 0.6:
+            if lh_consistency > 0.75:
+                score += 2.0
+            elif lh_consistency > 0.6:
                 score += 1.0
             
-            # Strong positive bias in coefficients
-            # Natural images are more balanced around zero
-            if lh_positive_ratio > 0.65:
+            if lh_positive_ratio > 0.65 or lh_positive_ratio < 0.35:
                 score += 1.5
-            elif lh_positive_ratio > 0.58:
+            elif lh_positive_ratio > 0.58 or lh_positive_ratio < 0.42:
                 score += 0.5
             
-            # Low coefficient of variation (uniform addition)
-            if cv < 0.7:
+            # HL sub-band detection (medium strength watermark)
+            if np.mean(np.abs(HL)) > 4.0:
+                score += 3.0
+            elif np.mean(np.abs(HL)) > 2.5:
+                score += 2.0
+            elif np.mean(np.abs(HL)) > 1.5:
                 score += 1.0
-            elif cv < 0.85:
+            
+            if hl_ratio > 1.5:
+                score += 2.0
+            elif hl_ratio > 1.2:
+                score += 1.0
+            
+            if hl_consistency > 0.75:
+                score += 2.0
+            elif hl_consistency > 0.6:
+                score += 1.0
+            
+            if hl_positive_ratio > 0.65 or hl_positive_ratio < 0.35:
+                score += 1.5
+            elif hl_positive_ratio > 0.58 or hl_positive_ratio < 0.42:
                 score += 0.5
+            
+            # Variance checks (watermark increases energy)
+            if lh_variance > 3.0:
+                score += 1.0
+            if hl_variance > 3.0:
+                score += 1.0
             
             channel_metrics.append({
                 'lh_mean': float(np.mean(np.abs(LH))),
+                'hl_mean': float(np.mean(np.abs(HL))),
+                'll_mean': float(np.mean(np.abs(LL))),
                 'lh_ratio': float(lh_ratio),
-                'consistency': float(block_consistency),
-                'positive_ratio': float(lh_positive_ratio),
+                'hl_ratio': float(hl_ratio),
+                'lh_consistency': float(lh_consistency),
+                'hl_consistency': float(hl_consistency),
+                'll_consistency': float(ll_consistency),
+                'lh_positive_ratio': float(lh_positive_ratio),
+                'hl_positive_ratio': float(hl_positive_ratio),
                 'score': float(score)
             })
             pattern_scores.append(score)
@@ -137,12 +192,13 @@ def verify_watermark(image_path, sensitivity='medium', known_watermarks=None):
         score_consistency = 1.0 - (np.std(pattern_scores) / (avg_score + 1e-10))
         
         # Sensitivity thresholds
-        # Balanced thresholds: detect real watermarks while avoiding false positives
-        # Real watermarked images typically score 6-9, natural images score 1-4
+        # Adjusted for multi-sub-band embedding (scores are higher now)
+        # Real watermarked images with 3 sub-bands typically score 12-25
+        # Natural images score 2-8
         thresholds = {
-            'high': 6.5,      # Strict - for high confidence detection
-            'medium': 5.0,    # Balanced - good for most use cases
-            'low': 4.0        # Lenient - catches degraded watermarks
+            'high': 15.0,     # Strict - for high confidence detection
+            'medium': 10.0,   # Balanced - good for most use cases
+            'low': 7.0        # Lenient - catches degraded/compressed watermarks
         }
         
         threshold = thresholds.get(sensitivity, 5.0)

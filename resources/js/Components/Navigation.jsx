@@ -5,6 +5,11 @@ export default function Navigation({ current = "upload" }) {
         { name: "Upload Image", href: "/", key: "upload" },
         { name: "Verify Image", href: "/verify", key: "verify" },
         { name: "DWT Visualizer", href: "/visualize", key: "visualize" },
+        {
+            name: "AI Verification",
+            href: "/ai-verification",
+            key: "ai-verification",
+        },
     ];
 
     return (
