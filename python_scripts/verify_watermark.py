@@ -103,70 +103,54 @@ def verify_watermark(image_path, sensitivity='medium', known_watermarks=None):
             
             # === COMPOSITE SCORE ===
             # Calculate watermark score based on all three sub-bands
+            # More conservative scoring to reduce false positives
             score = 0.0
             
-            # LL sub-band detection (lower strength watermark)
-            if np.mean(np.abs(LL)) > 100:  # LL has higher base values
+            # Key insight: Natural images have low LH and HL means (typically < 1.5)
+            # Our watermark with strength 6.0 should push these significantly higher (3.5+)
+            
+            # LH sub-band detection (strength 6.0 watermark expected)
+            lh_abs_mean = np.mean(np.abs(LH))
+            if lh_abs_mean > 5.0:  # Very strong signal
+                score += 4.0
+            elif lh_abs_mean > 3.5:  # Clear watermark presence
+                score += 2.5
+            elif lh_abs_mean > 2.5:  # Possible watermark
+                score += 1.0
+            
+            # HL sub-band detection (strength 6.0 watermark expected)
+            hl_abs_mean = np.mean(np.abs(HL))
+            if hl_abs_mean > 5.0:  # Very strong signal
+                score += 4.0
+            elif hl_abs_mean > 3.5:  # Clear watermark presence
+                score += 2.5
+            elif hl_abs_mean > 2.5:  # Possible watermark
+                score += 1.0
+            
+            # Both LH and HL should be elevated together if watermark present
+            if lh_abs_mean > 3.0 and hl_abs_mean > 3.0:
+                score += 3.0  # Bonus for correlated elevation
+            
+            # Variance should be elevated by watermark pattern
+            # Natural images: lh_variance ~ 0.5-2.0
+            # Watermarked images: lh_variance ~ 5.0+
+            if lh_variance > 8.0:
                 score += 2.0
-            elif np.mean(np.abs(LL)) > 90:
+            elif lh_variance > 5.0:
                 score += 1.0
             
-            if ll_consistency > 0.85:
-                score += 1.5
-            elif ll_consistency > 0.75:
-                score += 0.5
-            
-            # LH sub-band detection (medium strength watermark)
-            if np.mean(np.abs(LH)) > 4.0:
-                score += 3.0
-            elif np.mean(np.abs(LH)) > 2.5:
+            if hl_variance > 8.0:
                 score += 2.0
-            elif np.mean(np.abs(LH)) > 1.5:
+            elif hl_variance > 5.0:
                 score += 1.0
             
-            if lh_ratio > 1.5:
-                score += 2.0
-            elif lh_ratio > 1.2:
-                score += 1.0
-            
-            if lh_consistency > 0.75:
-                score += 2.0
-            elif lh_consistency > 0.6:
-                score += 1.0
-            
-            if lh_positive_ratio > 0.65 or lh_positive_ratio < 0.35:
-                score += 1.5
-            elif lh_positive_ratio > 0.58 or lh_positive_ratio < 0.42:
-                score += 0.5
-            
-            # HL sub-band detection (medium strength watermark)
-            if np.mean(np.abs(HL)) > 4.0:
-                score += 3.0
-            elif np.mean(np.abs(HL)) > 2.5:
-                score += 2.0
-            elif np.mean(np.abs(HL)) > 1.5:
-                score += 1.0
-            
-            if hl_ratio > 1.5:
-                score += 2.0
-            elif hl_ratio > 1.2:
-                score += 1.0
-            
-            if hl_consistency > 0.75:
-                score += 2.0
-            elif hl_consistency > 0.6:
-                score += 1.0
-            
-            if hl_positive_ratio > 0.65 or hl_positive_ratio < 0.35:
-                score += 1.5
-            elif hl_positive_ratio > 0.58 or hl_positive_ratio < 0.42:
-                score += 0.5
-            
-            # Variance checks (watermark increases energy)
-            if lh_variance > 3.0:
-                score += 1.0
-            if hl_variance > 3.0:
-                score += 1.0
+            # Consistency check (watermark creates structured pattern)
+            # Only add if we already have some evidence of watermark
+            if lh_abs_mean > 2.5 or hl_abs_mean > 2.5:
+                if lh_consistency > 0.8:
+                    score += 1.0
+                if hl_consistency > 0.8:
+                    score += 1.0
             
             channel_metrics.append({
                 'lh_mean': float(np.mean(np.abs(LH))),
@@ -191,36 +175,37 @@ def verify_watermark(image_path, sensitivity='medium', known_watermarks=None):
         # Cross-channel consistency (watermark should affect all channels similarly)
         score_consistency = 1.0 - (np.std(pattern_scores) / (avg_score + 1e-10))
         
-        # Sensitivity thresholds
-        # Adjusted for multi-sub-band embedding (scores are higher now)
-        # Real watermarked images with 3 sub-bands typically score 12-25
-        # Natural images score 2-8
+        # Sensitivity thresholds - MUCH MORE CONSERVATIVE
+        # With new scoring: watermarked images score 10-20+, natural images score 0-5
+        # Maximum possible score per channel is ~21
         thresholds = {
-            'high': 15.0,     # Strict - for high confidence detection
-            'medium': 10.0,   # Balanced - good for most use cases
-            'low': 7.0        # Lenient - catches degraded/compressed watermarks
+            'high': 12.0,     # Very strict - only strong, clear watermarks
+            'medium': 8.0,    # Balanced - good watermarks with some degradation
+            'low': 6.0        # Lenient - catches compressed/degraded watermarks
         }
         
-        threshold = thresholds.get(sensitivity, 5.0)
+        threshold = thresholds.get(sensitivity, 8.0)
         
-        # Require at least 2 channels to show watermark pattern
-        # Individual channel must be at least 70% of threshold to count
-        channels_detected = sum(1 for s in pattern_scores if s >= (threshold * 0.7))
+        # A channel is "detected" if it exceeds 75% of threshold
+        # This ensures we don't count weak false positives
+        channels_detected = sum(1 for s in pattern_scores if s >= (threshold * 0.75))
         
-        # Detection logic with multiple criteria:
-        # 1. Primary: Average score exceeds threshold + at least 2 channels detected
-        # 2. Alternative: One channel very strong (threshold + 3.0) + at least 1 other channel detected
-        # 3. Alternative: All 3 channels consistently elevated (90% of threshold)
+        # Stricter detection logic:
+        # Require EITHER:
+        # 1. Average score well above threshold (1.2x) with at least 2 channels
+        # 2. Very high max score (1.5x threshold) with at least 2 channels detected
+        # 3. All 3 channels consistently at/above threshold
         watermark_detected = (
-            (avg_score >= threshold and channels_detected >= 2) or 
-            (max_score >= (threshold + 3.0) and channels_detected >= 2) or
-            (channels_detected >= 3 and avg_score >= (threshold * 0.85))
+            (avg_score >= (threshold * 1.2) and channels_detected >= 2) or 
+            (max_score >= (threshold * 1.5) and channels_detected >= 2) or
+            (channels_detected >= 3 and min_score >= threshold)
         )
         
+        # Confidence levels based on how far above threshold
         confidence_level = 'LOW'
-        if avg_score >= threshold + 3.0:
+        if avg_score >= threshold * 1.5:
             confidence_level = 'HIGH'
-        elif avg_score >= threshold + 1.5:
+        elif avg_score >= threshold * 1.25:
             confidence_level = 'MEDIUM'
         
         # Check if watermark detected and known watermarks are image type

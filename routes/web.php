@@ -22,3 +22,4 @@ Route::post('/visualize', [DWTVisualizerController::class, 'visualize'])->name('
 
 // AI Verification routes
 Route::get('/ai-verification', [AIVerificationController::class, 'index'])->name('ai-verification');
+Route::post('/ai-verification', [AIVerificationController::class, 'detect'])->name('ai-verification.detect');
